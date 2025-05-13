@@ -8,6 +8,7 @@ use Illuminate\Support\Str;
 use Illuminate\Http\Request;
 use ZipArchive;
 use Carbon\Carbon;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Collection;
 
 
@@ -118,6 +119,10 @@ class ChatController extends Controller
                 }
             }
 
+            if (!$this->isRelevantMessage($message)) {
+                continue; // skip chit-chat
+            }
+
             Message::create([
                 'group_name' => $groupName,
                 'sender' => $sender,
@@ -129,6 +134,19 @@ class ChatController extends Controller
         }
 
         return redirect('/')->with('success', 'Chat uploaded and processed successfully.');
+    }
+
+    public function isRelevantMessage($text)
+    {
+        $response = Http::timeout(15)->post('http://localhost:11434/api/generate', [
+            'model' => 'nova',
+            'prompt' => "You're a filter. Is the following WhatsApp message meaningful for analysis (not greetings, ok, hi, emojis etc)? Reply ONLY with 'yes' or 'no'. Message: \"$text\"",
+            'stream' => false
+        ]);
+
+        $reply = strtolower(trim($response['response'] ?? ''));
+
+        return $reply === 'yes';
     }
 
 }
