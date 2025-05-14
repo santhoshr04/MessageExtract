@@ -15,12 +15,24 @@
             <p class="text-gray-600 text-sm">{{ count($messages) }} messages in this group</p>
         </div>
 
+        <form method="GET" class="flex flex-wrap gap-4 justify-center items-center mb-6">
+            <input type="date" name="start_date" value="{{ $start ?? '' }}"
+                class="px-4 py-2 border border-gray-300 rounded shadow-sm focus:ring-blue-500 focus:outline-none">
+            <input type="date" name="end_date" value="{{ $end ?? '' }}"
+                class="px-4 py-2 border border-gray-300 rounded shadow-sm focus:ring-blue-500 focus:outline-none">
+            <button type="submit"
+                class="bg-blue-600 text-white px-4 py-2 rounded shadow hover:bg-blue-700 transition">Filter by Date</button>
+        </form>
+
         <!-- Table Section -->
         <div>
             <input type="text" id="searchInput" onkeyup="filterTable()"
                    placeholder="🔍 Search messages..."
                    class="w-full max-w-md mx-auto block px-4 py-2 border border-gray-300 rounded mb-6 shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
 
+            @if ($start && $end)
+                <p class="text-sm text-gray-500">Showing messages from <strong>{{ $start }}</strong> to <strong>{{ $end }}</strong></p>
+            @endif
             <div class="overflow-x-auto p-4">
                 <table id="chatTable" data-sort-dir="asc" class="min-w-[1000px] text-sm text-left border border-gray-200">
                     <thead class="bg-gray-50 sticky top-0 text-gray-700 uppercase text-xs">

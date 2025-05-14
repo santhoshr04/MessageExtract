@@ -26,15 +26,26 @@ class ChatController extends Controller
 
     }
 
-    public function groupView($name)
+    public function groupView(Request $request, $name)
     {
         $decodedName = urldecode($name);
 
-        $messages = Message::where('group_name', $decodedName)->orderBy('timestamp')->get();
+        $query = Message::where('group_name', $decodedName);
+
+        if ($request->filled('start_date') && $request->filled('end_date')) {
+            $query->whereBetween('timestamp', [
+                $request->start_date . ' 00:00:00',
+                $request->end_date . ' 23:59:59'
+            ]);
+        }
+
+        $messages = $query->orderBy('timestamp')->get();
 
         return view('group', [
             'messages' => $messages,
-            'name' => $decodedName
+            'name' => $decodedName,
+            'start' => $request->start_date,
+            'end' => $request->end_date
         ]);
     }
 
