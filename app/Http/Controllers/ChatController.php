@@ -16,9 +16,28 @@ class ChatController extends Controller
 {
     public function index()
     {
-        $messages = Message::orderBy('timestamp')->get();
-        return view('index', compact('messages'));
+        return view('index');
     }
+
+    public function view()
+    {
+        $messages = Message::all();
+        return view('view', compact('messages'));
+
+    }
+
+    public function groupView($name)
+    {
+        $decodedName = urldecode($name);
+
+        $messages = Message::where('group_name', $decodedName)->orderBy('timestamp')->get();
+
+        return view('group', [
+            'messages' => $messages,
+            'name' => $decodedName
+        ]);
+    }
+
     public function upload(Request $request)
     {
         $request->validate([
@@ -133,7 +152,7 @@ class ChatController extends Controller
             ]);
         }
 
-        return redirect('/')->with('success', 'Chat uploaded and processed successfully.');
+        return redirect('/view')->with('success', 'Chat uploaded and processed successfully.');
     }
 
     public function isRelevantMessage($text)
