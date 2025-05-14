@@ -62,6 +62,24 @@
                     </tbody>
                 </table>
             </div>
+
+            @if($knowledgeEntries->count())
+                <div class="mt-10">
+                    <h2 class="text-2xl font-bold text-gray-800 mb-4">📚 Knowledge Base</h2>
+                    <div class="bg-white shadow rounded-lg p-6 space-y-4">
+                        @foreach($knowledgeEntries as $entry)
+                            <div class="border-b pb-3">
+                                <p><strong>Q:</strong> {{ $entry->question }}</p>
+                                @if($entry->answer)
+                                    <p><strong>A:</strong> {{ $entry->answer }}</p>
+                                @else
+                                    <p class="text-sm text-gray-500 italic">No answer yet.</p>
+                                @endif
+                            </div>
+                        @endforeach
+                    </div>
+                </div>
+            @endif
         </div>
     </div>
 

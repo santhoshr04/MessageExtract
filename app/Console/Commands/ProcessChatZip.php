@@ -1,86 +1,41 @@
 <?php
 
-namespace App\Http\Controllers;
+namespace App\Console\Commands;
 
-use App\Models\Message;
-use App\Models\KnowledgeEntry;
-use Illuminate\Support\Facades\Storage;
-use Illuminate\Support\Str;
-use Illuminate\Http\Request;
+use Illuminate\Console\Command;
 use ZipArchive;
 use Carbon\Carbon;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
+use App\Models\Message;
+use App\Models\KnowledgeEntry;
 use Illuminate\Support\Facades\Http;
-use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\File;
 
-
-class ChatController extends Controller
+class ProcessChatZip extends Command
 {
-    public function index()
+    protected $signature = 'chat:process-zip';
+    protected $description = 'Process a WhatsApp chat ZIP file via CLI with animation and message count';
+
+    public function handle()
     {
-        return view('index');
-    }
+        $path = $this->ask('Enter full path to ZIP file');
 
-    public function view()
-    {
-        $messages = Message::all();
-        return view('view', compact('messages'));
-
-    }
-
-    public function groupView(Request $request, $name)
-    {
-        $decodedName = urldecode($name);
-
-        $query = Message::where('group_name', $decodedName);
-
-        if ($request->filled('start_date') && $request->filled('end_date')) {
-            $query->whereBetween('timestamp', [
-                $request->start_date . ' 00:00:00',
-                $request->end_date . ' 23:59:59'
-            ]);
+        if (!file_exists($path)) {
+            $this->error("❌ File does not exist: $path");
+            return 1;
         }
 
-        $messages = $query->orderBy('timestamp')->get();
-
-        $knowledgeEntries = KnowledgeEntry::with(['questionMessage', 'answerMessage'])
-            ->whereHas('questionMessage', function ($q) use ($decodedName) {
-                $q->where('group_name', $decodedName);
-            })
-            ->get();
-
-        return view('group', [
-            'messages' => $messages,
-            'name' => $decodedName,
-            'start' => $request->start_date,
-            'end' => $request->end_date,
-            'knowledgeEntries' => $knowledgeEntries
-        ]);
-    }
-
-    public function upload(Request $request)
-    {
-        $request->validate([
-            'chat_zip' => 'required|file|mimes:zip|max:20480',
-        ]);
-
-        $file = $request->file('chat_zip');
-
-        if (!$file || !$file->isValid()) {
-            return back()->with('error', 'Invalid or corrupted ZIP file.');
-        }
-
-        $filename = uniqid('chat_') . '.zip';
-        $zipPath = $file->storeAs('chats', $filename, 'public');
-        $fullPath = public_path('storage/chats/' . $filename);
+        $this->info("📦 Validating and opening ZIP file...");
 
         $zip = new ZipArchive();
-        if ($zip->open($fullPath) !== TRUE) {
-            return back()->with('error', 'Failed to open ZIP file at ' . $fullPath);
+        if ($zip->open($path) !== true) {
+            $this->error("❌ Failed to open ZIP file.");
+            return 1;
         }
 
         $extractFolder = 'extracted/' . uniqid();
         $extractPath = storage_path('app/' . $extractFolder);
-
         if (!file_exists($extractPath)) {
             mkdir($extractPath, 0755, true);
         }
@@ -90,7 +45,8 @@ class ChatController extends Controller
 
         $txtFile = collect(glob($extractPath . '/*.txt'))->first();
         if (!$txtFile) {
-            return back()->with('error', 'No chat .txt file found in ZIP.');
+            $this->error('❌ No .txt file found in ZIP.');
+            return 1;
         }
 
         $groupName = pathinfo($txtFile, PATHINFO_FILENAME);
@@ -102,9 +58,15 @@ class ChatController extends Controller
             ->toArray();
 
         $mediaIndex = 0;
-        $previousQuestions = []; // Keep track of question messages
+        $savedMessages = 0;
+        $spinner = ['|', '/', '-', '\\'];
+        $spinIndex = 0;
+        $previousQuestions = [];
 
-        foreach ($lines as $line) {
+        foreach ($lines as $index => $line) {
+            echo "\r" . $spinner[$spinIndex % 4] . " Processing line $index";
+            $spinIndex++;
+
             $line = preg_replace('/\x{202F}|\xC2\xA0/u', ' ', $line);
 
             if (preg_match('/^(\d{1,2}\/\d{1,2}\/\d{2,4}),\s(\d{1,2}:\d{2}(?:\s?[APMapm]{2}))\s-\s([^:]+):\s(.*)$/', $line, $matches)) {
@@ -150,11 +112,10 @@ class ChatController extends Controller
             }
 
             $skipPhrases = ['hi', 'hello', 'good morning', 'good night', 'gm', 'ok', 'okay', 'lol'];
-                if (in_array(strtolower(trim($message)), $skipPhrases)) {
-                    continue;
-                }
+            if (in_array(strtolower(trim($message)), $skipPhrases)) {
+                continue;
+            }
 
-            // 🔍 LLM Analysis
             $analysis = $this->analyzeMessageWithLLM($message, $previousQuestions);
             $type = $analysis['type'] ?? 'neither';
             $matchIndex = $analysis['question_index'] ?? null;
@@ -163,7 +124,6 @@ class ChatController extends Controller
                 continue;
             }
 
-            // Save the message
             $messageObj = Message::create([
                 'group_name' => $groupName,
                 'sender' => $sender,
@@ -172,8 +132,8 @@ class ChatController extends Controller
                 'media_path' => $media_path,
                 'language' => null,
             ]);
+            $savedMessages++;
 
-            // Handle KnowledgeEntry
             if ($type === 'question') {
                 KnowledgeEntry::create([
                     'question' => $message,
@@ -192,36 +152,38 @@ class ChatController extends Controller
                 ];
             } elseif ($type === 'answer' && $matchIndex !== null && isset($previousQuestions[$matchIndex - 1])) {
                 $question = $previousQuestions[$matchIndex - 1];
-
                 KnowledgeEntry::where('question_id', $question['id'])->update([
                     'answer' => $message,
                     'answer_id' => $messageObj->id,
                 ]);
             }
+
+            usleep(25000); // Delay to show spinner
         }
 
-        return redirect('/view')->with('success', 'Chat uploaded and processed successfully.');
+        echo "\r✅ Done! Total saved messages: $savedMessages\n";
+        return 0;
     }
 
-    public function analyzeMessageWithLLM($text, $previousQuestions = [])
+    private function analyzeMessageWithLLM($text, $previousQuestions = [])
     {
         $prompt = <<<EOT
-    You are a WhatsApp message analyzer.
+        You are a WhatsApp message analyzer.
 
-    Your job is to classify a given message as one of:
-    - "question" if it asks something meaningful
-    - "answer" if it provides an informative or relevant reply
-    - "neither" if it is casual talk, greetings, jokes, or non-informative content (e.g. "hi", "good morning", "lol", "okay")
+        Your job is to classify a given message as one of:
+        - "question" if it asks something meaningful
+        - "answer" if it provides an informative or relevant reply
+        - "neither" if it is casual talk, greetings, jokes, or non-informative content (e.g. "hi", "good morning", "lol", "okay")
 
-    Also, if the message is an answer, try to match it to one of the previous questions (by index).
+        Also, if the message is an answer, try to match it to one of the previous questions (by index).
 
-    Only extract meaningful and analytical content — ignore short messages and chit-chat.
+        Only extract meaningful and analytical content — ignore short messages and chit-chat.
 
-    Message:
-    "$text"
+        Message:
+        "$text"
 
-    Previous Questions:
-    EOT;
+        Previous Questions:
+        EOT;
 
         foreach ($previousQuestions as $i => $q) {
             $prompt .= "\n" . ($i + 1) . ". " . $q['message'];
@@ -230,11 +192,12 @@ class ChatController extends Controller
         $prompt .= <<<EOT
 
 
-    Respond ONLY with valid JSON format like:
-    { "type": "question" | "answer" | "neither", "question_index": number | null }
-    EOT;
+        Respond ONLY with valid JSON format like:
+        { "type": "question" | "answer" | "neither", "question_index": number | null }
+        EOT;
 
         $response = Http::timeout(15)->post('http://localhost:11434/api/generate', [
+            //TODO REPLACE THE MODAL NAME BEFORE RUN
             'model' => 'nova',
             'prompt' => $prompt,
             'stream' => false,
@@ -249,6 +212,4 @@ class ChatController extends Controller
             return ['type' => 'neither', 'question_index' => null];
         }
     }
-
-
 }
